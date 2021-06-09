@@ -1,26 +1,15 @@
 /* ===========================================================
-   #File: _d3d9_text.cpp #
+   #File: _d3d9_sprite.cpp #
    #Date: 10 June 2021 #
    #Revision: 1.0 #
    #Creator: Omid Miresmaeili #
-   #Description: First Direct3D 9.0 Demo. Rendering a simple text. #
+   #Description: Drawing sprites using Direct3D 9.0 #
    #Notice: (C) Copyright 2021 by Omid. All Rights Reserved. #
    =========================================================== */
 
-#pragma warning (disable: 6011)     // dereferencing a potentially null pointer
-#pragma warning (disable: 26495)    // not initializing struct members
-#pragma warning (disable: 26812)    // unscoped enum
+#include "Common.h"
 
-#include <windows.h>
-
-#include <d3d9.h>
-#include <d3dx9.h>
-
-#include <stdlib.h>
-#include <tchar.h>
-#include <memory.h>
-
-#include <stdbool.h>
+#include "DirectInput.h"
 
 typedef struct {
     IDirect3DDevice9 *      device;
@@ -42,7 +31,20 @@ typedef struct {
     bool                    initialized;
 } D3D9RenderContext;
 
-D3D9RenderContext * g_render_ctx = NULL;
+D3D9RenderContext * g_render_ctx = nullptr;
+
+DirectInput * g_dinput = nullptr;
+
+struct BulletInfo {
+    D3DXVECTOR3 pos;
+    float rotation;
+    float life;
+};
+static int max_bullet_count = 1'000'000;
+struct BulletList {
+    int count;
+    BulletInfo * items;
+};
 
 static void
 update_scene (float dt) {
@@ -281,7 +283,7 @@ init_window (D3D9RenderContext * render_ctx) {
     AdjustWindowRect(&R, WS_OVERLAPPEDWINDOW, false);
     render_ctx->wnd = CreateWindow(
         _T("D3DWndClassName"),
-        _T("D3D9 Text"),
+        _T("D3D9 Sprite"),
         WS_OVERLAPPEDWINDOW, 100, 100, R.right, R.bottom,
         0, 0, render_ctx->instance, 0
     );
@@ -398,10 +400,19 @@ WinMain (
     _tcscpy_s(font_desc.FaceName, _T("Times New Roman"));
 
     D3DXCreateFontIndirect(g_render_ctx->device, &font_desc, &g_render_ctx->font);
+
+    g_dinput = (DirectInput *)::malloc(sizeof(DirectInput));
+    DirectInput_Init(g_dinput);
+
 #pragma endregion
 #pragma region Main Loop
     MSG  msg;
     msg.message = WM_NULL;
+    __int64 cnts_per_sec = 0;
+    QueryPerformanceFrequency((LARGE_INTEGER*)&cnts_per_sec);
+    float secs_per_cnt = 1.0f / (float)cnts_per_sec;
+    __int64 prev_time_stamp = 0;
+    QueryPerformanceCounter((LARGE_INTEGER*)&prev_time_stamp);
     while (msg.message != WM_QUIT) {
         // If there are Window messages then process them.
         if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) {
@@ -418,13 +429,23 @@ WinMain (
                 continue;
             }
             if (false == is_device_lost(g_render_ctx)) {
-                update_scene(0.0f);
+                __int64 curr_time_stamp = 0;
+                QueryPerformanceCounter((LARGE_INTEGER*)&curr_time_stamp);
+                float dt = (curr_time_stamp - prev_time_stamp) * secs_per_cnt;
+
+                update_scene(dt);
                 draw_scene(g_render_ctx);
+
+                // Prepare for next iteration: The current time stamp becomes
+                // the previous time stamp for the next iteration.
+                prev_time_stamp = curr_time_stamp;
             }
         }
     }
 #pragma endregion
 #pragma region Cleanup
+
+    DirectInput_Deinit(g_dinput);
 
     ::free(g_render_ctx);
 #pragma endregion
