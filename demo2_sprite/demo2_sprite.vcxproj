@@ -72,6 +72,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <LinkIncremental>true</LinkIncremental>
+    <OutDir>./</OutDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -88,7 +89,8 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Program Files %28x86%29\Microsoft DirectX SDK %28June 2010%29\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)/externals;C:\Program Files %28x86%29\Microsoft DirectX SDK %28June 2010%29\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -142,7 +144,20 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\externals\DearImGui\imgui.cpp" />
+    <ClCompile Include="..\externals\DearImGui\imgui_draw.cpp" />
+    <ClCompile Include="..\externals\DearImGui\imgui_impl_dx9.cpp" />
+    <ClCompile Include="..\externals\DearImGui\imgui_impl_win32.cpp" />
+    <ClCompile Include="..\externals\DearImGui\imgui_tables.cpp" />
+    <ClCompile Include="..\externals\DearImGui\imgui_widgets.cpp" />
+    <ClCompile Include="BulletArray.cpp" />
+    <ClCompile Include="DirectInput.cpp" />
     <ClCompile Include="_d3d9_sprite.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="BulletArray.h" />
+    <ClInclude Include="Common.h" />
+    <ClInclude Include="DirectInput.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

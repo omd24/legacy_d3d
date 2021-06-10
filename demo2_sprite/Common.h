@@ -14,3 +14,9 @@
 #include <memory.h>
 
 #include <stdbool.h>
+
+// _ASSERT_EXPR macro
+#include <crtdbg.h>
+#ifdef _DEBUG
+#pragma comment(lib, "ucrtd.lib")
+#endif

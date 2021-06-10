@@ -13,10 +13,48 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="DearImGui">
+      <UniqueIdentifier>{b7cb0724-6b69-430b-aeff-04675c48df13}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="_d3d9_sprite.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DirectInput.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="BulletArray.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\DearImGui\imgui.cpp">
+      <Filter>DearImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\DearImGui\imgui_draw.cpp">
+      <Filter>DearImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\DearImGui\imgui_impl_dx9.cpp">
+      <Filter>DearImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\DearImGui\imgui_impl_win32.cpp">
+      <Filter>DearImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\DearImGui\imgui_tables.cpp">
+      <Filter>DearImGui</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\DearImGui\imgui_widgets.cpp">
+      <Filter>DearImGui</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="DirectInput.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BulletArray.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -4,12 +4,20 @@
    #Revision: 1.0 #
    #Creator: Omid Miresmaeili #
    #Description: Drawing sprites using Direct3D 9.0 #
+   #Reference: http://www.d3dcoder.net/d3d9c.htm
    #Notice: (C) Copyright 2021 by Omid. All Rights Reserved. #
    =========================================================== */
 
 #include "Common.h"
 
 #include "DirectInput.h"
+#include "BulletArray.h"
+
+#include <DearImGui/imgui.h>
+#include <DearImGui/imgui_impl_dx9.h>
+#include <DearImGui/imgui_impl_win32.h>
+
+//#define ENABLE_IMGUI
 
 typedef struct {
     IDirect3DDevice9 *      device;
@@ -22,50 +30,161 @@ typedef struct {
     HWND                    wnd;
     IDirect3D9 *            d3d9_object;
 
-
-    ID3DXFont *             font;
-
-    bool                    paused;
     D3DPRESENT_PARAMETERS   present_params;
 
+    ID3DXSprite *           sprite;
+
+    // background
+    IDirect3DTexture9 *     bg_tex;
+    D3DXVECTOR3             bg_center;
+
+    // bullet data
+    IDirect3DTexture9 *     bullet_tex;
+    D3DXVECTOR3             bullet_center;
+    float                   bullet_speed;
+
+    // ship data
+    IDirect3DTexture9 *     ship_tex;
+    D3DXVECTOR3             ship_center;
+    D3DXVECTOR3             ship_pos;
+    float                   ship_rotation;
+    float                   ship_speed;
+
+    float                   ship_max_speed;
+    float                   ship_accel;
+    float                   ship_drag;
+
+    bool                    paused;
     bool                    initialized;
 } D3D9RenderContext;
 
 D3D9RenderContext * g_render_ctx = nullptr;
-
 DirectInput * g_dinput = nullptr;
+BulletArray * g_bullets = nullptr;
 
-struct BulletInfo {
-    D3DXVECTOR3 pos;
-    float rotation;
-    float life;
-};
-static int max_bullet_count = 1'000'000;
-struct BulletList {
-    int count;
-    BulletInfo * items;
-};
-
+// Helper functions.
 static void
-update_scene (float dt) {
-    // no update for now
+update_ship (D3D9RenderContext * render_ctx, float dt) {
+    // Check input.
+    if (DirectInput_KeyDown(g_dinput, DIK_A))   render_ctx->ship_rotation += 4.0f * dt;
+    if (DirectInput_KeyDown(g_dinput, DIK_D))   render_ctx->ship_rotation -= 4.0f * dt;
+    if (DirectInput_KeyDown(g_dinput, DIK_W))   render_ctx->ship_speed    += render_ctx->ship_accel * dt;
+    if (DirectInput_KeyDown(g_dinput, DIK_S))   render_ctx->ship_speed    -= render_ctx->ship_accel * dt;
+
+    // Clamp top speed.
+    if (render_ctx->ship_speed > render_ctx->ship_max_speed)    render_ctx->ship_speed =  render_ctx->ship_max_speed;
+    if (render_ctx->ship_speed < -render_ctx->ship_max_speed)   render_ctx->ship_speed = -render_ctx->ship_max_speed;
+
+    // Rotate counterclockwise when looking down -z axis (i.e., rotate
+    // clockwise when looking down the +z axis.
+    D3DXVECTOR3 ship_dir(-sinf(render_ctx->ship_rotation), cosf(render_ctx->ship_rotation), 0.0f);
+
+    // Update position and speed based on time.
+    render_ctx->ship_pos   += ship_dir * render_ctx->ship_speed * dt;
+    render_ctx->ship_speed -= render_ctx->ship_drag * render_ctx->ship_speed * dt;
 }
-static void
-draw_scene (D3D9RenderContext * render_ctx) {
-    render_ctx->device->Clear(0, 0, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(255, 255, 255), 1.0f, 0);
+static void update_bullets (D3D9RenderContext * render_ctx, float dt) {
+    // Make static so that its value persists across function calls.
+    static float fire_delay = 0.0f;
 
-    RECT format_rect;
-    GetClientRect(g_render_ctx->wnd, &format_rect);
+    // Accumulate time.
+    fire_delay += dt;
 
-    render_ctx->device->BeginScene();
+    // Did the user press the spacebar key and has 0.1 seconds passed?
+    // We can only fire one bullet every 0.1 seconds.  If we do not
+    // put this delay in, the ship will fire bullets way too fast.
+    if (DirectInput_KeyDown(g_dinput, DIK_SPACE) && fire_delay > 0.1f) {
+        // Remember the ship is always drawn at the center of the window--
+        // the origin.  Therefore, bullets originate from the origin.
+        D3DXVECTOR3 pos      = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
 
-    g_render_ctx->font->DrawText(0, _T("Hello Direct3D 9.0"), -1,
-        &format_rect, DT_CENTER | DT_VCENTER,
-        //D3DCOLOR_XRGB(rand() % 256, rand() % 256, rand() % 256));
-        D3DCOLOR_XRGB(255, 0, 0));
+        // The bullets rotation should match the ship's rotating at the
+        // instant it is fired.  
+        float rotation = render_ctx->ship_rotation;
 
-    render_ctx->device->EndScene();
-    render_ctx->device->Present(0, 0, 0, 0);
+        // Bullet just born.
+        float life     = 0.0f;
+
+        // Add the bullet to the list.
+        BulletArray_AddItem(g_bullets, pos, rotation, life);
+
+        // A bullet was just fired, so reset the fire delay.
+        fire_delay = 0.0f;
+    }
+
+    // loop through bullets and update positions
+    int i = 0;
+    while (i < BulletArray_Count(g_bullets)) {
+        BulletArray_UpdateItemPos(g_bullets, i, dt);
+        ++i;
+    }
+}
+static void draw_bg (D3D9RenderContext * render_ctx) {
+    // Set a texture coordinate scaling transform.  Here we scale the texture 
+    // coordinates by 10 in each dimension.  This tiles the texture 
+    // ten times over the sprite surface.
+    D3DXMATRIX tex_scale;
+    D3DXMatrixScaling(&tex_scale, 10.0f, 10.0f, 0.0f);
+    render_ctx->device->SetTransform(D3DTS_TEXTURE0, &tex_scale);
+
+    // Position and size the background sprite--remember that 
+    // we always draw the ship in the center of the client area 
+    // rectangle. To give the illusion that the ship is moving,
+    // we translate the background in the opposite direction.
+    D3DXMATRIX T, S, ST;
+    D3DXMatrixTranslation(&T, -render_ctx->ship_pos.x, -render_ctx->ship_pos.y, -render_ctx->ship_pos.z);
+    D3DXMatrixScaling(&S, 20.0f, 20.0f, 0.0f);
+    ST = S * T;
+    render_ctx->sprite->SetTransform(&ST);
+
+    // Draw the background sprite.
+    render_ctx->sprite->Draw(render_ctx->bg_tex, 0, &render_ctx->bg_center, 0, D3DCOLOR_XRGB(255, 255, 255));
+    render_ctx->sprite->Flush();
+
+    // Restore defaults texture coordinate scaling transform.
+    D3DXMatrixScaling(&tex_scale, 1.0f, -1.0f, 0.0f);
+    render_ctx->device->SetTransform(D3DTS_TEXTURE0, &tex_scale);
+}
+static void draw_ship (D3D9RenderContext * render_ctx) {
+    // Turn on the alpha test.
+    render_ctx->device->SetRenderState(D3DRS_ALPHATESTENABLE, true);
+
+    // Set ships orientation.
+    D3DXMATRIX R;
+    D3DXMatrixRotationZ(&R, render_ctx->ship_rotation);
+    render_ctx->sprite->SetTransform(&R);
+
+    // Draw the ship.
+    render_ctx->sprite->Draw(render_ctx->ship_tex, 0, &render_ctx->ship_center, 0, D3DCOLOR_XRGB(255, 255, 255));
+    render_ctx->sprite->Flush();
+
+    // Turn off the alpha test.
+    render_ctx->device->SetRenderState(D3DRS_ALPHATESTENABLE, false);
+}
+static void draw_bullets (D3D9RenderContext * render_ctx) {
+    // Turn on alpha blending.
+    render_ctx->device->SetRenderState(D3DRS_ALPHABLENDENABLE, true);
+
+    for (int i = 0; i < BulletArray_Count(g_bullets); ++i) {
+        D3DXVECTOR3 pos = BulletArray_GetItemPos(g_bullets, i);
+        float rotation = BulletArray_GetItemRotation(g_bullets, i);
+
+        // Set its position and orientation.
+        D3DXMATRIX T, R, RT;
+        D3DXMatrixRotationZ(&R, rotation);
+        D3DXMatrixTranslation(&T, pos.x, pos.y, pos.z);
+        RT = R * T;
+        render_ctx->sprite->SetTransform(&RT);
+
+        // Add it to the batch.
+        render_ctx->sprite->Draw(render_ctx->bullet_tex, 0, &render_ctx->bullet_center, 0, D3DCOLOR_XRGB(255, 255, 255));
+        ++i;
+    }
+    // Draw all the bullets at once.
+    render_ctx->sprite->Flush();
+
+    // Turn off alpha blending.
+    render_ctx->device->SetRenderState(D3DRS_ALPHABLENDENABLE, false);
 }
 static bool
 check_device_caps () {
@@ -74,11 +193,56 @@ check_device_caps () {
 }
 static void
 d3d9_lost_device (D3D9RenderContext * render_ctx) {
-    render_ctx->font->OnLostDevice();
+    render_ctx->sprite->OnLostDevice();
 }
 static void
 d3d9_reset_device (D3D9RenderContext * render_ctx) {
-    render_ctx->font->OnResetDevice();
+    ImGui_ImplDX9_InvalidateDeviceObjects();
+    render_ctx->device->Reset(&render_ctx->present_params);
+    ImGui_ImplDX9_CreateDeviceObjects();
+
+    render_ctx->sprite->OnResetDevice();
+
+    // Sets up the camera 1000 units back looking at the origin.
+    D3DXMATRIX V;
+    D3DXVECTOR3 pos(0.0f, 0.0f, -1000.0f);
+    D3DXVECTOR3 up(0.0f, 1.0f, 0.0f);
+    D3DXVECTOR3 target(0.0f, 0.0f, 0.0f);
+    D3DXMatrixLookAtLH(&V, &pos, &target, &up);
+    render_ctx->device->SetTransform(D3DTS_VIEW, &V);
+
+    // The following code defines the volume of space the camera sees.
+    D3DXMATRIX P;
+    RECT R;
+    GetClientRect(render_ctx->wnd, &R);
+    float width  = (float)R.right;
+    float height = (float)R.bottom;
+    D3DXMatrixPerspectiveFovLH(&P, D3DX_PI * 0.25f, width / height, 1.0f, 5000.0f);
+    render_ctx->device->SetTransform(D3DTS_PROJECTION, &P);
+
+    // This code sets texture filters, which helps to smooth out distortions
+    // when you scale a texture.  
+    render_ctx->device->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    render_ctx->device->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    render_ctx->device->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+
+    // This line of code disables Direct3D lighting.
+    render_ctx->device->SetRenderState(D3DRS_LIGHTING, false);
+
+    // The following code specifies an alpha test and reference value.
+    render_ctx->device->SetRenderState(D3DRS_ALPHAREF, 10);
+    render_ctx->device->SetRenderState(D3DRS_ALPHAFUNC, D3DCMP_GREATER);
+
+    // The following code is used to setup alpha blending.
+    render_ctx->device->SetTextureStageState(0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE);
+    render_ctx->device->SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1);
+    render_ctx->device->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+    render_ctx->device->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+
+    // Indicates that we are using 2D texture coordinates.
+    render_ctx->device->SetTextureStageState(
+        0, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2
+    );
 }
 static bool is_device_lost (D3D9RenderContext * render_ctx) {
     // Get the state of the graphics device.
@@ -96,7 +260,6 @@ static bool is_device_lost (D3D9RenderContext * render_ctx) {
     } else if (hr == D3DERR_DEVICENOTRESET) {
         // The device is lost but we can reset and restore it.
         d3d9_lost_device(render_ctx);
-        render_ctx->device->Reset(&render_ctx->present_params);
         d3d9_reset_device(render_ctx);
         return false;
     } else
@@ -148,8 +311,36 @@ d3d9_enable_fullscreen_mode (D3D9RenderContext * render_ctx, bool enable) {
 
     // Reset the device with the changes.
     d3d9_lost_device(render_ctx);
-    (render_ctx->device->Reset(&render_ctx->present_params));
     d3d9_reset_device(render_ctx);
+}
+static void
+update_scene (D3D9RenderContext * render_ctx, float dt) {
+    DirectInput_Poll(g_dinput);
+
+    update_ship(render_ctx, dt);
+    update_bullets(render_ctx, dt);
+}
+static void
+draw_scene (D3D9RenderContext * render_ctx) {
+    render_ctx->device->Clear(0, 0, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(255, 255, 255), 1.0f, 0);
+
+    render_ctx->device->BeginScene();
+
+    render_ctx->sprite->Begin(D3DXSPRITE_OBJECTSPACE | D3DXSPRITE_DONOTMODIFY_RENDERSTATE);
+    draw_bg(render_ctx);
+    draw_ship(render_ctx);
+    draw_bullets(render_ctx);
+
+    render_ctx->sprite->End();
+
+#ifdef ENABLE_IMGUI
+    ImGui::Render();
+    ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+#endif // ENABLE_IMGUI
+
+
+    render_ctx->device->EndScene();
+    render_ctx->device->Present(0, 0, 0, 0);    // present backbuffer
 }
 LRESULT
 msg_proc (D3D9RenderContext * render_ctx, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -184,7 +375,6 @@ msg_proc (D3D9RenderContext * render_ctx, UINT msg, WPARAM wparam, LPARAM lparam
                 render_ctx->paused = false;
                 min_maxed = true;
                 d3d9_lost_device(render_ctx);
-                (render_ctx->device->Reset(&render_ctx->present_params));
                 d3d9_reset_device(render_ctx);
             }
             // Restored is any resize that is not a minimize or maximize.
@@ -199,7 +389,6 @@ msg_proc (D3D9RenderContext * render_ctx, UINT msg, WPARAM wparam, LPARAM lparam
                 // we are restoring to full screen mode.
                 if (min_maxed && render_ctx->present_params.Windowed) {
                     d3d9_lost_device(render_ctx);
-                    (render_ctx->device->Reset(&render_ctx->present_params));
                     d3d9_reset_device(render_ctx);
                 } else {
                     // No, which implies the user is resizing by dragging
@@ -225,7 +414,6 @@ msg_proc (D3D9RenderContext * render_ctx, UINT msg, WPARAM wparam, LPARAM lparam
         render_ctx->present_params.BackBufferWidth  = client_rect.right;
         render_ctx->present_params.BackBufferHeight = client_rect.bottom;
         d3d9_lost_device(render_ctx);
-        (render_ctx->device->Reset(&render_ctx->present_params));
         d3d9_reset_device(render_ctx);
 
         return 0;
@@ -250,9 +438,13 @@ msg_proc (D3D9RenderContext * render_ctx, UINT msg, WPARAM wparam, LPARAM lparam
     }
     return DefWindowProc(render_ctx->wnd, msg, wparam, lparam);
 }
-
+// Forward declare message handler from imgui_impl_win32.cpp
+extern IMGUI_IMPL_API LRESULT
+ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK
 wnd_proc (HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam))
+        return true;
     // Don't start processing messages until the application has been created.
     if (g_render_ctx->initialized)
         return msg_proc(g_render_ctx, msg, wparam, lparam);
@@ -280,7 +472,7 @@ init_window (D3D9RenderContext * render_ctx) {
 
     // Default to a window with a client area rectangle of 800x600.
     RECT R = {0, 0, 800, 600};
-    AdjustWindowRect(&R, WS_OVERLAPPEDWINDOW, false);
+    ::AdjustWindowRect(&R, WS_OVERLAPPEDWINDOW, false);
     render_ctx->wnd = CreateWindow(
         _T("D3DWndClassName"),
         _T("D3D9 Sprite"),
@@ -288,8 +480,8 @@ init_window (D3D9RenderContext * render_ctx) {
         0, 0, render_ctx->instance, 0
     );
 
-    ShowWindow(render_ctx->wnd, SW_SHOW);
-    UpdateWindow(render_ctx->wnd);
+    ::ShowWindow(render_ctx->wnd, SW_SHOW);
+    ::UpdateWindow(render_ctx->wnd);
 }
 static void
 init_d3d9 (D3D9RenderContext * render_ctx) {
@@ -363,7 +555,29 @@ init_render_ctx (
         init_window(render_ctx);
         init_d3d9(render_ctx);
 
+        // ships and bullets
+        render_ctx->bullet_speed = 2500.0f;
+        render_ctx->ship_max_speed = 1500.0f;
+        render_ctx->ship_accel = 1000.0f;
+        render_ctx->ship_drag = 0.85f;
+
+        D3DXCreateSprite(render_ctx->device, &render_ctx->sprite);
+
+        D3DXCreateTextureFromFile(render_ctx->device, _T("bkgd1.bmp"), &render_ctx->bg_tex);
+        D3DXCreateTextureFromFile(render_ctx->device, _T("alienship.bmp"), &render_ctx->ship_tex);
+        D3DXCreateTextureFromFile(render_ctx->device, _T("bullet.bmp"), &render_ctx->bullet_tex);
+
+        render_ctx->bg_center = D3DXVECTOR3(256.0f, 256.0f, 0.0f);
+        render_ctx->ship_center = D3DXVECTOR3(64.0f, 64.0f, 0.0f);
+        render_ctx->bullet_center = D3DXVECTOR3(32.0f, 32.0f, 0.0f);
+
+        render_ctx->ship_pos = D3DXVECTOR3(0.0f, 0.0f, 0.0f);
+        render_ctx->ship_speed = 0.0f;
+        render_ctx->ship_rotation = 0.0f;
+
         render_ctx->initialized = true;
+
+        d3d9_reset_device(render_ctx);
     }
 }
 int WINAPI
@@ -399,10 +613,36 @@ WinMain (
     font_desc.PitchAndFamily  = DEFAULT_PITCH | FF_DONTCARE;
     _tcscpy_s(font_desc.FaceName, _T("Times New Roman"));
 
-    D3DXCreateFontIndirect(g_render_ctx->device, &font_desc, &g_render_ctx->font);
-
+    // -- setup direct-input
     g_dinput = (DirectInput *)::malloc(sizeof(DirectInput));
-    DirectInput_Init(g_dinput);
+    DirectInput_Init(
+        g_dinput,
+        DISCL_NONEXCLUSIVE | DISCL_FOREGROUND,
+        DISCL_NONEXCLUSIVE | DISCL_FOREGROUND,
+        g_render_ctx->instance,
+        g_render_ctx->wnd
+    );
+
+    // -- setup bullet-list
+    size_t bullets_size = BulletArray_CalcRequiredSize();
+    BYTE * bullets_memory = (BYTE *)::malloc(bullets_size);
+    g_bullets = BulletArray_Init(bullets_memory);
+
+    // -- setup dear-imgui
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    // Setup Dear ImGui style
+    ImGui::StyleColorsDark();
+    //ImGui::StyleColorsClassic();
+
+    // Setup Platform/Renderer backends
+    ImGui_ImplWin32_Init(g_render_ctx->wnd);
+    ImGui_ImplDX9_Init(g_render_ctx->device);
 
 #pragma endregion
 #pragma region Main Loop
@@ -433,17 +673,58 @@ WinMain (
                 QueryPerformanceCounter((LARGE_INTEGER*)&curr_time_stamp);
                 float dt = (curr_time_stamp - prev_time_stamp) * secs_per_cnt;
 
-                update_scene(dt);
+                //
+                // DearImGui
+                // 
+                {
+                    static float f = 0.0f;
+                    static int counter = 0;
+
+                    // -- start the Dear ImGui frame
+                    ImGui_ImplDX9_NewFrame();
+                    ImGui_ImplWin32_NewFrame();
+                    ImGui::NewFrame();
+                    ImGui::Begin("D3D9 DearImGui!");                        // Create a window called "Hello, world!" and append into it.
+
+
+                    ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
+
+                    if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
+                        counter++;
+                    ImGui::SameLine();
+                    ImGui::Text("counter = %d", counter);
+
+                    ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
+                    ImGui::End();
+
+                    ImGui::EndFrame();
+                }
+
+                update_scene(g_render_ctx, dt);
                 draw_scene(g_render_ctx);
 
                 // Prepare for next iteration: The current time stamp becomes
                 // the previous time stamp for the next iteration.
                 prev_time_stamp = curr_time_stamp;
+
+                // -- display results on window's title bar
+                TCHAR buf[50];
+                _sntprintf_s(buf, 50, 50, _T("D3D9 Sprite Demo:   Bullet Count: %d"), BulletArray_Count(g_bullets));
+                ::SetWindowText(g_render_ctx->wnd, buf);
             }
         }
     }
 #pragma endregion
 #pragma region Cleanup
+
+    // -- imgui
+    ImGui_ImplDX9_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+
+
+    BulletArray_Deinit(g_bullets);
+    ::free(bullets_memory);
 
     DirectInput_Deinit(g_dinput);
 
