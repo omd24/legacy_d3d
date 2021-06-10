@@ -28,7 +28,6 @@ typedef struct {
     D3DDEVTYPE              device_type;
     DWORD                   requested_vertex_processing;
 
-    // window stuff
     HINSTANCE               instance;
     HWND                    wnd;
     IDirect3D9 *            d3d9_object;
