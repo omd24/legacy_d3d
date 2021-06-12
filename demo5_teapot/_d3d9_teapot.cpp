@@ -1,5 +1,5 @@
 /* ===========================================================
-   #File: _d3d9_mesh.cpp #
+   #File: _d3d9_teapot.cpp #
    #Date: 13 June 2021 #
    #Revision: 1.0 #
    #Creator: Omid Miresmaeili #
@@ -37,13 +37,13 @@ typedef struct {
 
     ID3DXMesh *                 cylinder_mesh;
     ID3DXMesh *                 sphere_mesh;
+    ID3DXMesh *                 teapot_mesh;
 
     IDirect3DVertexBuffer9 *    vb;
     IDirect3DIndexBuffer9 *     ib;
     ID3DXEffect *               fx;
     D3DXHANDLE                  htech;
     D3DXHANDLE                  hwvp;
-    D3DXHANDLE                  hfill;
 
     float                       camera_rotation_y;
     float                       camera_radius;
@@ -51,8 +51,6 @@ typedef struct {
 
     D3DXMATRIX                  view;
     D3DXMATRIX                  proj;
-
-    bool                        enable_wireframe;
 
     bool                        paused;
     bool                        initialized;
@@ -64,131 +62,6 @@ VertexPos g_vertex_pos = {};
 
 // Helper functions.
 
-static void
-create_triangle_grid (
-    int nrows, int ncols,
-    float dx, float dz,
-    const D3DXVECTOR3& center,
-    D3DXVECTOR3 verts [],
-    DWORD indices []
-) {
-    int nverts = nrows * ncols;
-    int ncells_row = nrows - 1;
-    int ncells_col = ncols - 1;
-
-    int numTris = ncells_row * ncells_col * 2;
-
-    float width = (float)ncells_col * dx;
-    float depth = (float)ncells_row * dz;
-
-    //===========================================
-    // Build vertices.
-
-    // We first build the grid geometry centered about the origin and on
-    // the xz-plane, row-by-row and in a top-down fashion.  We then translate
-    // the grid vertices so that they are centered about the specified 
-    // parameter 'center'.
-
-    // Offsets to translate grid from quadrant 4 to center of 
-    // coordinate system.
-    float xoffset = -width * 0.5f;
-    float zoffset =  depth * 0.5f;
-
-    int k = 0;
-    for (float i = 0; i < nrows; ++i) {
-        for (float j = 0; j < ncols; ++j) {
-            // Negate the depth coordinate to put in quadrant four.  
-            // Then offset to center about coordinate system.
-            verts[k].x =  j * dx + xoffset;
-            verts[k].z = -i * dz + zoffset;
-            verts[k].y =  0.0f;
-
-            // Translate so that the center of the grid is at the
-            // specified 'center' parameter.
-            D3DXMATRIX T;
-            D3DXMatrixTranslation(&T, center.x, center.y, center.z);
-            D3DXVec3TransformCoord(&verts[k], &verts[k], &T);
-
-            ++k; // Next vertex
-        }
-    }
-
-    //===========================================
-    // Build indices.
-
-    // Generate indices for each quad.
-    k = 0;
-    for (DWORD i = 0; i < (DWORD)ncells_row; ++i) {
-        for (DWORD j = 0; j < (DWORD)ncells_col; ++j) {
-            indices[k]     =   i * ncols + j;
-            indices[k + 1] =   i * ncols + j + 1;
-            indices[k + 2] = (i + 1) * ncols + j;
-
-            indices[k + 3] = (i + 1) * ncols + j;
-            indices[k + 4] =   i * ncols + j + 1;
-            indices[k + 5] = (i + 1) * ncols + j + 1;
-
-            // next quad
-            k += 6;
-        }
-    }
-}
-static void
-create_geom_buffer (D3D9RenderContext * render_ctx) {
-
-    // generate grid
-    int nrows = 100;
-    int ncols = 100;
-    DWORD * indices = (DWORD *)::calloc(
-        (nrows - 1) * (ncols - 1) * 6,
-        sizeof(DWORD)
-    );
-    D3DXVECTOR3 * vertices = (D3DXVECTOR3 *)::calloc(
-        nrows * ncols,
-        sizeof(D3DXVECTOR3)
-    );
-    create_triangle_grid(100, 100, 1.0f, 1.0f, D3DXVECTOR3(0.0f, 0.0f, 0.0f), vertices, indices);
-
-    // Save vertex count and triangle count for DrawIndexedPrimitive arguments.
-    render_ctx->ngridverts  = 100 * 100;
-    render_ctx->ngridtriangles = 99 * 99 * 2;
-
-    // Obtain a pointer to a new vertex buffer.
-    render_ctx->device->CreateVertexBuffer(
-        render_ctx->ngridverts * sizeof(VertexPos),
-        D3DUSAGE_WRITEONLY, 0, D3DPOOL_MANAGED, &render_ctx->vb, 0
-    );
-
-    // Now lock it to obtain a pointer to its internal data, and write the
-    // grid's vertex data.
-    VertexPos * v = 0;
-    render_ctx->vb->Lock(0, 0, (void**)&v, 0);
-
-    for (DWORD i = 0; i < render_ctx->ngridverts; ++i)
-        v[i].pos = vertices[i];
-
-    render_ctx->vb->Unlock();
-
-    // Obtain a pointer to a new index buffer.
-    render_ctx->device->CreateIndexBuffer(
-        render_ctx->ngridtriangles * 3 * sizeof(WORD), D3DUSAGE_WRITEONLY,
-        D3DFMT_INDEX16, D3DPOOL_MANAGED, &render_ctx->ib, 0
-    );
-
-    // Now lock it to obtain a pointer to its internal data, and write the
-    // grid's index data.
-
-    WORD* k = 0;
-    render_ctx->ib->Lock(0, 0, (void**)&k, 0);
-
-    for (DWORD i = 0; i < render_ctx->ngridtriangles * 3; ++i)
-        k[i] = (WORD)indices[i];
-
-    render_ctx->ib->Unlock();
-
-    ::free(vertices);
-    ::free(indices);
-}
 static void
 create_fx (D3D9RenderContext * render_ctx) {
     // Create the FX from a .fx file.
@@ -203,9 +76,6 @@ create_fx (D3D9RenderContext * render_ctx) {
     // Obtain handles.
     render_ctx->htech = render_ctx->fx->GetTechniqueByName("transform_tech");
     render_ctx->hwvp  = render_ctx->fx->GetParameterByName(0, "g_wvp");
-    render_ctx->hfill  = render_ctx->fx->GetParameterByName(0, "g_wireframe");     
-    // 0 means top-level parameter
-    // from https://docs.microsoft.com/en-us/windows/win32/direct3d9/id3dxbaseeffect--getparameterbyname
 }
 
 static void
@@ -342,42 +212,13 @@ update_scene (D3D9RenderContext * render_ctx, float dt) {
     create_view_mat(render_ctx);
 }
 static void
-draw_cylinders (D3D9RenderContext * render_ctx) {
-    D3DXMATRIX T, R;
-
-    D3DXMatrixRotationX(&R, D3DX_PI * 0.5f);
-
-    for (int z = -30; z <= 30; z+= 10) {
-        D3DXMatrixTranslation(&T, -10.0f, 3.0f, (float)z);
-        D3DXMATRIX view_proj = R * T * render_ctx->view * render_ctx->proj;
-        render_ctx->fx->SetMatrix(render_ctx->hwvp, &view_proj);
-        render_ctx->fx->CommitChanges();
-        render_ctx->cylinder_mesh->DrawSubset(0);
-
-        D3DXMatrixTranslation(&T, 10.0f, 3.0f, (float)z);
-        view_proj = R * T * render_ctx->view * render_ctx->proj;
-        render_ctx->fx->SetMatrix(render_ctx->hwvp, &view_proj);
-        render_ctx->fx->CommitChanges();
-        render_ctx->cylinder_mesh->DrawSubset(0);
-    }
-}
-static void
-draw_spheres (D3D9RenderContext * render_ctx) {
+draw_teapot (D3D9RenderContext * render_ctx) {
     D3DXMATRIX T;
-
-    for (int z = -30; z <= 30; z+= 10) {
-        D3DXMatrixTranslation(&T, -10.0f, 7.5f, (float)z);
-        D3DXMATRIX view_proj = T * render_ctx->view * render_ctx->proj;
-        render_ctx->fx->SetMatrix(render_ctx->hwvp, &view_proj);
-        render_ctx->fx->CommitChanges();
-        render_ctx->sphere_mesh->DrawSubset(0);
-
-        D3DXMatrixTranslation(&T, 10.0f, 7.5f, (float)z);
-        view_proj = T * render_ctx->view * render_ctx->proj;
-        render_ctx->fx->SetMatrix(render_ctx->hwvp, &view_proj);
-        render_ctx->fx->CommitChanges();
-        render_ctx->sphere_mesh->DrawSubset(0);
-    }
+    D3DXMatrixTranslation(&T, 2.0f, 2.0f, -2.0f);
+    D3DXMATRIX view_proj = T * render_ctx->view * render_ctx->proj;
+    render_ctx->fx->SetMatrix(render_ctx->hwvp, &view_proj);
+    render_ctx->fx->CommitChanges();
+    render_ctx->teapot_mesh->DrawSubset(0);
 }
 static void
 draw_scene (D3D9RenderContext * render_ctx) {
@@ -385,12 +226,6 @@ draw_scene (D3D9RenderContext * render_ctx) {
     render_ctx->device->Clear(0, 0, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_XRGB(255, 255, 255), 1.0f, 0);
 
     render_ctx->device->BeginScene();
-
-    // Let Direct3D know the vertex buffer, index buffer and vertex 
-    // declaration we are using.
-    render_ctx->device->SetStreamSource(0, render_ctx->vb, 0, sizeof(VertexPos));
-    render_ctx->device->SetIndices(render_ctx->ib);
-    render_ctx->device->SetVertexDeclaration(g_vertex_pos.decl);
 
     // setup fx
     render_ctx->fx->SetTechnique(render_ctx->htech);
@@ -401,23 +236,7 @@ draw_scene (D3D9RenderContext * render_ctx) {
     for (UINT i = 0; i < n_passes; i++) {
         render_ctx->fx->BeginPass(i);
 
-        D3DXMATRIX view_proj = render_ctx->view * render_ctx->proj;
-        render_ctx->fx->SetMatrix(render_ctx->hwvp, &view_proj);
-
-        if (g_render_ctx->enable_wireframe)
-            render_ctx->fx->SetInt(render_ctx->hfill, 2);
-        else
-            render_ctx->fx->SetInt(render_ctx->hfill, 3);
-
-        render_ctx->fx->CommitChanges();
-        render_ctx->device->DrawIndexedPrimitive(
-            D3DPT_TRIANGLELIST, 0,
-            0, render_ctx->ngridverts,
-            0, render_ctx->ngridtriangles
-        );
-
-        draw_cylinders(render_ctx);
-        draw_spheres(render_ctx);
+        draw_teapot(render_ctx);
 
         render_ctx->fx->EndPass();
     }
@@ -684,10 +503,8 @@ WinMain (
     );
 
     // -- create shapes
-    D3DXCreateCylinder(g_render_ctx->device, 1.0f, 1.0f, 6.0f, 20, 20, &g_render_ctx->cylinder_mesh, 0);
-    D3DXCreateSphere(g_render_ctx->device, 1.0f, 20, 20, &g_render_ctx->sphere_mesh, 0);
+    D3DXCreateTeapot(g_render_ctx->device, &g_render_ctx->teapot_mesh, 0);
 
-    create_geom_buffer(g_render_ctx);
     create_fx(g_render_ctx);
 
     d3d9_reset_device(g_render_ctx);
@@ -695,7 +512,6 @@ WinMain (
     InitAllVertexDeclarations(g_render_ctx->device, &g_vertex_pos);
 
     // -- setup dear-imgui
-    g_render_ctx->enable_wireframe = true;
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -743,13 +559,21 @@ WinMain (
                 // DearImGui
                 // 
                 {
+                    static float f = 0.0f;
+                    static int counter = 0;
+
                     // -- start the Dear ImGui frame
                     ImGui_ImplDX9_NewFrame();
                     ImGui_ImplWin32_NewFrame();
                     ImGui::NewFrame();
                     ImGui::Begin("D3D9 DearImGui!");                        // Create a window called "Hello, world!" and append into it.
 
-                    ImGui::Checkbox("Wireframe", &g_render_ctx->enable_wireframe);   
+                    ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
+
+                    if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
+                        counter++;
+                    ImGui::SameLine();
+                    ImGui::Text("counter = %d", counter);
 
                     ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / ImGui::GetIO().Framerate, ImGui::GetIO().Framerate);
                     ImGui::End();
@@ -766,7 +590,7 @@ WinMain (
 
                 // -- display results on window's title bar
                 TCHAR buf[50];
-                _sntprintf_s(buf, 50, 50, _T("D3D9 Mesh Demo:   %s"), _T(""));
+                _sntprintf_s(buf, 50, 50, _T("D3D9 Teapot Demo:   %s"), _T(""));
                 ::SetWindowText(g_render_ctx->wnd, buf);
             }
         }

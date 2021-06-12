@@ -1,5 +1,4 @@
 uniform extern float4x4 g_wvp;
-uniform extern int g_wireframe;
 
 struct OutputVS {
     float4 pos_h : POSITION0;
@@ -22,8 +21,8 @@ technique transform_tech {
     pass p0 {
         VertexShader = compile vs_2_0 TransformVS();
         PixelShader = compile ps_2_0 TransformPS();
-        
-        fillmode = g_wireframe;
+
+        fillmode = WireFrame;
     }
 }
 
